@@ -1,117 +1,103 @@
 // A mutator is a function that receives the value a prior promise was fullfilled with.
 // A mutator's return value/promise is discarded and replaced with the (modified) value.
 
-// f0, f1, ..., fn are function passed as a paramter
-
 const mapObject = fn => obj => Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, fn(value, key, obj)]))
 const zip = (...arrays) => arrays[0].map((_, i) => arrays.map(a => a[i]))
-const assignTo = result => obj => Object.assign(result, obj)
 
 // promise.then(resolve.then(f0)...then(fn)) => promise.then(f0)...then(fn)
-export const resolve = value => Promise.resolve(value) // will be thenAble 
-
-// promise.then(mutate(mutator)) => promise.then(value => { mutator(value); return value; })
-export const mutate = mutator => resolve.then(mutator).then2(value => () => value)
-//                    mutator => value => Promise.resolve(mutator(value)).then(() => value)
+// NOTICE: additional functionality added at end of the file. 
+const resolve = value => Promise.resolve(value)
 
 // promise.then(map(fn)) => promise.then(array => array.map(fn))
-//                       => promise.then(object => ... object[key] = fn(object[key], key, object) ...)
+//                       => promise.then(object => ({ key: fn(object[key], key, object) }))
 const mapEntries = fn => source => Object.entries(source).map(([key, value]) => fn(value, key, source))
-const fromEntries = source => result => Array.isArray(source) ? result : Object.fromEntries(zip(Object.keys(source), result))
-export const map = fn => resolve.then(mapEntries(fn)).then(a => Promise.all(a)).then2(fromEntries)
+const fromEntries = (result, source) => Array.isArray(source) ? result : Object.fromEntries(zip(Object.keys(source), result))
+const map = fn => resolve.then(mapEntries(fn)).then(a => Promise.all(a)).then2(fromEntries)
 
+// object 2 function
+const o2f = o => o instanceof Function ? o : 
+                 o !== new Object(o) || o instanceof Date ? () => o : 
+                 v => map(o2f)(o).then(map((fn, k) => fn(v ? v[k] : undefined, k, v)))
 
-// The values of a template are functions that receive the fullfill value (or parts of it).
-// A template is applied on fullfilled by calling each function similar to map fullfilled.
+// promise.then(mutate(mutator)) => promise.then(value => { mutator(value); return value; })
+const mutate = (...args) => resolve.then(...args).then2((_, v) => v)
+//             mutator => value => resolve.then(mutator).then(() => value)
 
-// replace fullfill value with template applied on fullfilled properties
-export const replace = template => resolve.then(value => map((fn, key) => fn(value[key], key, value))(template))
+// promise.then(assign({ key: fn })) => promise.mutate(value => value[key] = fn(value[key], key, value))
+const assign = (...args) => resolve.then(...args).then2((resolved, initial) => Object.assign(initial, resolved))
 
-// replace fullfill value with template applied on fullfilled only properties
-export const replace1 = template => replace(mapObject(fn => v => fn(v))(template))
+// promise.then(assign({ key: fn })) => promise.mutate(value => value[key] ??= fn(value[key], key, value))
+const fallback = (...args) => resolve.then(...args).then2((resolved, initial) => Object.assign(resolved, initial))
 
-// replace fullfill value with template applied on fullfilled itself
-export const replace3 = template => replace(mapObject(fn => (v, i, a) => fn(a))(template))
+// function or key
+const fok = o => o instanceof Function ? o : v => v[o]
 
-// update fullfill value with template applied on fullfilled properties
-export const update = template => resolve.then(replace(template)).then2(assignTo)
+// accept i parameters, a resolve function that defaults to replace, and a reject handler
+const extend = (target, i, m=v=>v) => mapObject((n, k) => (...args) => target.then(array => array[n ?? k](...m(args.slice(0, i))), ...args.slice(i + 1)).then2(args[i] ?? (v => v)))
 
-// update fullfill value with template applied on fullfilled only properties
-export const update1 = template => update(mapObject(fn => v => fn(v))(template))
+const promise = target => Object.assign(target, {
+  then: (...args) => promise(v => target(v).then(...args.slice(0, 1).map(o2f), ...args.slice(1))),
+  then2: (fn, ...args) => promise(v => target(v).then(o => fn(o, v), ...args)),
+  catch: fn => promise(v => target(v).catch(fn)),
+  finally: fn => promise(v => target(v).finally(fn)),
+}, mapObject(fn => (...args) => target.then(fn(...args.slice(0, 1)), ...args.slice(1)))({
+  mutate,
+  assign,
+  fallback,
+  map: o => map(o2f(o)),
+  forEach: o => map(o2f(o)).then2((_, v) => v),
+}), extend(target, 1, a => a.map(fok))({
+  // 1 parameter, arg[0] is key or function, use then for thisArg
+  filter: null,
 
-// update fullfill value with template applied on fullfilled itself
-export const update3 = template => update(mapObject(fn => (v, i, a) => fn(a))(template))
+  every: null,
+  some: null,
 
+  find: null,
+  findIndex: null,
+  findLast: null,
+  findLastIndex: null,
+}), extend(target, 0)({
+  keys: null,
+  values: null,
+  entries: null,
 
-// mutation of promised array
+  reverse: 'toReversed',
 
-// promise.then(filter('property')) => promise.then(array => array.filter(o => o['property']))
-// promise.then(filter(fn        )) => promise.then(array => array.filter(fn))
-export const filter = fn => resolve.then(array => array.filter(typeof fn == 'string' ? o => o[fn] : fn))
+  pop: null,
+  shift: null,
 
-// promise.then(sort(fn)) => promise.then(array => array.sort(fn))
-export const sort = fn => resolve.then(array => array.sort(fn))
+  toString: null,
+}), extend(target, 1)({
+  at: null,
+  flat: null,
+  join: null,
+  sort: 'toSorted',
+}), extend(target, 2)({
+  reduce: null,
+  reduceRight: null,
+  flatMap: null,
+  with: null,
 
-// promise.then(push2result(fn)) => promise.then(array => { let result = []; array.forEach(fn(result)); return result; })
-export const push2result = fn => resolve
-  .then(() => [])
-  .then2(array => mutate(result => array.forEach(fn(result))))
+  // optional second
+  includes: null,
+  indexOf: null,
+  lastIndexOf: null,
 
+  slice: null,
+  toLocaleString: null,
+}), extend(target, 3)({
+  fill: null,
+}), extend(target, 1, v => v[0])({
+  push: null,
+  unshift: null,
+}), extend(target, 3, v => [...v.slice(0, 2), ...v.slice(2, 3).flat()])({
+  splice: null,
+  toSpliced: null,
+}), {
+  // resolve.setcln(setup, cleanup)(mutator) => resolve.then(value => { setup(value); mutator(value); cleanup(value); return value; })
+  setcln: (setup, cleanup) => mutator => target.mutate(setup).mutate(mutator).mutate(cleanup)
+})
+promise(resolve)
 
-// return function remembers if it was called
-const called = fn => fn.memory = () => (fn.memory.called = true) ? fn() : null
-const constant = value => () => value
-const callif = fn => condition => (condition ? fn : () => null)()
-
-// recursion step
-const step = (mutator, array, i = 0) => Promise.resolve(
-  i < array.length && !array.resolve.called
-).then(callif(() =>
-  Promise.resolve(!array.excluded.has(array[i]))
-  .then(callif(() => mutator(array[i], i, array)))
-  .then(() => step(mutator, array, i + 1))
-))
-
-// promise.then(mutateEach(fn)) => promise.then(array => ... fn(element, index, array) ...).then(filter(...))
-export const mutateEach = mutator => thenAble((array, i = 0, excluded = new Set()) => resolve
-  // do not replace excluded/remove if already handled in parent loop
-  .then(() => array.excluded ||= excluded)
-  .then(() => array.remove ||= o => excluded.add(o))
-
-  // resolve returns the parent loop's resolve. It is possible to resolve all nested loops.
-  .then(() => array.resolve = called(constant(array.resolve)))
-
-  // recursively mutate  through array until resolved or end reached. Removed elements are skipped.
-  .then(() => step(mutator, array, i))
-
-  // go back to parent loop's resolve or unset
-  .then(() => (array.resolve = array.resolve()) || delete array.resolve)
-
-  // if excluded different than parent handles delete
-  .then(() => array.excluded == excluded && delete array.excluded && delete array.remove)
-  // don't filter if empty (always if parent handles)
-  .then(() => excluded.size ? array.filter(o => !excluded.has(o)) : array)
-(array))
-
-// promise.then(mutatePairs(fn)) => promise.then(array => ... fn(element, index, array) ...).then(filter(...))
-export const mutatePairs = mutator => mutateEach((start, i, a) => mutateEach(end => mutator(start, end, a))(a, i + 1))
-
-
-
-export const log = () => mutate(console.log)
-
-const thenAble = target => Object.assign(target, mapObject(fn => thenfn => fn(thenfn, target))(thenAble.fns))
-thenAble.fns = Object.assign({
-  then: (fn, hist) => thenAble(v => hist(v).then(fn)),
-  then2: (fn, hist) => thenAble(v => hist(v).then(fn(v))),
-}, mapObject(f => (fn, hist) => thenAble(v => hist(v).then(f(fn))))({
-  mutate, map, replace, update, replace1, update1, replace3, update3,
-  filter, sort, push2result, mutateEach, mutatePairs,
-  log,
-}))
-thenAble(resolve)
-
-// directly accesses resolve, won't support that wasn't added before
-
-// thenChain(fns)(promise) => promise.then(fns[0])...then(fns[n])
-// const thenChain = fns => promise => fns.length ? thenChain(fns.slice(1))(promise.then(fns[0])) : promise
+export default resolve
