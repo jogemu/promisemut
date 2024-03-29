@@ -1,6 +1,6 @@
 {
   "name": "promisemut",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chain instructions for mutating the fulfillment value of a not yet constructed promise.",
   "main": "index.js",
   "type": "module",
@@ -11,8 +11,6 @@
   "keywords": [
     "promise",
     "mutator",
-    "remove-array-item",
-    "break-nested-loop"
   ],
   "author": "jogemu",
   "license": "UNLICENSED",
