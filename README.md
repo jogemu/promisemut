@@ -1,6 +1,6 @@
 # promisemut
 
-Chain instructions for mutating the fulfillment value of a not yet constructed promise. This package allows to easily break promise chains into smaller, more manageable functions. Mutators for objects are described intuitively by using an object as a template. It is possible to perform selected array operations directly on array promises. Nested loops can break out of parent loops and delete array elements.
+Chain instructions for mutating the fulfillment value of a not yet constructed promise. This package allows to easily break promise chains into smaller, more manageable functions. Mutators for objects are described intuitively by using an object as a template. It is possible to perform array operations directly on array promises.
 
 Although this could be implemented without promises, they make sense here because of the intuitive data flow. Furthermore, it allows a mutator to return a promise.
 
@@ -18,21 +18,21 @@ Promise.resolve({ age: 0 }).then(
 The function can be simply wrapped in `mutate`.
 
 ```
-import { mutate } from 'promisemut'
+import resolve from 'promisemut'
 
 Promise.resolve({ age: 0 }).then(
-  mutate((value) => value.age += 1)
+  resolve.mutate((value) => value.age += 1)
 ).then(console.log)
 // Output: { age: 1 }
 ```
 
-This is called an `update` and can be described through a template object that has a function for each key it wants to update.
+Since this `assign`s a new value to `age` it can be described through a template object that has an independent function for each key.
 
 ```
-import { update } from 'promisemut'
+import resolve from 'promisemut'
 
 Promise.resolve({ age: 0 }).then(
-  update({
+  resolve.assign({
     age: (value) => value + 1
   })
 ).then(console.log)
@@ -42,7 +42,7 @@ Promise.resolve({ age: 0 }).then(
 It is simple to make the function easily reusable.
 
 ```
-let increaseAge = update({
+let increaseAge = resolve.assign({
   age: (value) => value + 1
 })
 
@@ -53,7 +53,7 @@ increaseAge({ age: 0 }).then(console.log)
 The template can access the object as well.
 
 ```
-let needsMaintenance = update({
+let needsMaintenance = resolve.assign({
   maintained: (value, key, item) => item.age < 1
 })
 
@@ -70,24 +70,33 @@ needsMaintenanceSoon({ age: 0 }).then(console.log)
 // Output: { age: 1, maintained: false }
 ```
 
-In case the original object should not be modified, import `replace` instead of `update`.
+In case the original object should not be modified, use `then` instead of `assign`.
 
 ### Arrays
 
-This package simplifies the array operations `filter`, `sort` and `map`. If `filter` receives a string instead of a function then array entries are included if the value for the property with this string is [truthy](https://developer.mozilla.org/en-US/docs/Glossary/Truthy). It is possible to `map` objects as well (index = key).
+```
+let array = resolve
+  .filter('age')   // [ {age: 1}, {age: 2} ]
+  .reverse()       // [ {age: 2}, {age: 1} ]
+  .map(o => o.age) // [ 2, 1 ]
+  .sort()          // [ 1, 2 ]
+  .map({
+    age: (...[,,a]) => a,
+    valid: true
+  })               // [ { age: 1, valid: true }, { age: 2, valid: true } ]
+  .then(console.log)
 
-The loop behavior of `mutateEach` is similar to `forEach`. However, the mutator has access to advanced operations. The third argument the mutator receives is the array that temporarily supports two additional methods.
+array([{age: 0}, {age: 1}, {age: 2}])
+```
 
-If an entry of the array is removed via `array.remove(entry)` then it will be filtered before the array is returned. Additionally if the loop hasn't reached the entry it will be skipped.
-
-The second method is `array.resolve()`. It may return the resolve function of the parent loop. In this case `array.resolve()()` would break out of `mutatePairs`, which uses `mutateEach` within `mutateEach` to loop through all pairs. The second argument is not the index but a second entry.
+It is possible to `map` objects as well (index = key).
 
 ## Advanced
 
 Many advantages of this approach only become apparent when the mutator requires arguments that do not traverse through the promise chain.
 
 ```
-let increaseAge = increment => update({
+let increaseAge = increment => resolve.assign({
   age: (value) => value + increment
 })
 
